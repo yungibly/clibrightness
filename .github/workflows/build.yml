@@ -76,7 +76,7 @@ jobs:
   homebrew:
     name: Update Homebrew tap
     needs: [build, release]
-    runs-on: ubuntu-24.04
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -87,12 +87,26 @@ jobs:
           ref: main
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
-      - name: Render and push formula
+      - name: Render formula
         env:
           VERSION: ${{ needs.build.outputs.version }}
           SHA256: ${{ needs.build.outputs.sha256 }}
         run: |
           bash scripts/formula.sh "$VERSION" "$SHA256" > tap/Formula/clibrightness.rb
+      - name: Install and test formula without display IO
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          HOMEBREW_NO_ASK: "1"
+        run: |
+          brew tap yungibly/tap
+          cp tap/Formula/clibrightness.rb "$(brew --repository yungibly/tap)/Formula/clibrightness.rb"
+          brew install yungibly/tap/clibrightness
+          brew test yungibly/tap/clibrightness
+      - name: Push formula
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
           cd tap
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

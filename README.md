@@ -84,7 +84,8 @@ archive. CLI smoke checks use only help and invalid arguments, without display I
 
 To release, update `VERSION`, commit and push to `main`, then push a matching tag
 such as `v0.1.0`. The same workflow publishes the tested binary and checksum,
-then updates `Formula/clibrightness.rb` in `yungibly/homebrew-tap`.
+then installs and tests the Homebrew formula on a GitHub macOS runner before
+updating `Formula/clibrightness.rb` in `yungibly/homebrew-tap`.
 
 The repository secret `HOMEBREW_TAP_TOKEN` must be a fine-grained token restricted
 to `yungibly/homebrew-tap` with **Contents: read and write**. Local `.env` files
