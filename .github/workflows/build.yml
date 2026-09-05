@@ -1,0 +1,106 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and offline checks (Apple Silicon)
+    runs-on: macos-26
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compile, run sanitized tests, and analyze
+        run: make all test analyze
+      - name: Check CLI without accessing a display
+        run: |
+          ./build/clibrightness --help
+          set +e
+          ./build/clibrightness set 401 > build/invalid-output.txt 2>&1
+          status=$?
+          set -e
+          test "$status" -eq 2
+          grep -q '0 to 400' build/invalid-output.txt
+      - name: Package Apple Silicon binary
+        id: package
+        run: |
+          version="$(cat VERSION)"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag must match VERSION ($version)" >&2
+            exit 1
+          fi
+          bash scripts/package.sh "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d ' ' -f 1 dist/checksums.txt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: clibrightness-aarch64-apple-darwin
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: clibrightness-aarch64-apple-darwin
+          path: dist
+      - name: Publish binary and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum --check checksums.txt
+          gh release create "$GITHUB_REF_NAME" ./*.tar.gz checksums.txt \
+            --verify-tag --title "clibrightness $GITHUB_REF_NAME" --generate-notes
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: [build, release]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: yungibly/homebrew-tap
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Render and push formula
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          bash scripts/formula.sh "$VERSION" "$SHA256" > tap/Formula/clibrightness.rb
+          cd tap
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/clibrightness.rb
+          if git diff --cached --quiet; then
+            echo 'Formula already up to date'
+            exit 0
+          fi
+          git commit -m "clibrightness $VERSION"
+          git pull --rebase origin main
+          git push origin HEAD:main

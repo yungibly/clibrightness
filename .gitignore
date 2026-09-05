@@ -1,0 +1,7 @@
+/build/
+/dist/
+/reference/
+.env
+.env.*
+!.env.example
+.DS_Store
